@@ -12,19 +12,56 @@ type FileEntry = {
   isDirectory: boolean
   children?: FileEntry[]
   expanded?: boolean
+  handle?: FileSystemDirectoryHandle | FileSystemFileHandle
 }
 
+// 声明 File System Access API 类型
 declare global {
-  interface Window {
-    electronAPI: {
-      readDirectory: (path: string) => Promise<FileEntry[]>
-      openFolderDialog: () => Promise<string | null>
-      watchDirectory: (path: string) => void
-      unwatchDirectory: (path: string) => void
-      onDirectoryChanged: (handler: (path: string) => void) => void
-      moveFile: (filePath: string, targetPath: string) => Promise<void>
-    }
+  interface FileSystemHandle {
+    readonly kind: 'file' | 'directory'
+    readonly name: string
   }
+
+  interface FileSystemFileHandle extends FileSystemHandle {
+    readonly kind: 'file'
+    getFile(): Promise<File>
+    createWritable(options?: FileSystemCreateWritableOptions): Promise<FileSystemWritableFileStream>
+  }
+
+  interface FileSystemDirectoryHandle extends FileSystemHandle {
+    readonly kind: 'directory'
+    entries(): AsyncIterableIterator<[string, FileSystemHandle]>
+    getFileHandle(name: string, options?: FileSystemGetFileOptions): Promise<FileSystemFileHandle>
+    getDirectoryHandle(name: string, options?: FileSystemGetDirectoryOptions): Promise<FileSystemDirectoryHandle>
+  }
+
+  interface FileSystemCreateWritableOptions {
+    keepExistingData?: boolean
+  }
+
+  interface FileSystemGetFileOptions {
+    create?: boolean
+  }
+
+  interface FileSystemGetDirectoryOptions {
+    create?: boolean
+  }
+
+  interface FileSystemWritableFileStream extends WritableStream {
+    write(data: any): Promise<void>
+    close(): Promise<void>
+  }
+
+  interface Window {
+    showDirectoryPicker: (options?: {
+      mode?: 'read' | 'readwrite'
+    }) => Promise<FileSystemDirectoryHandle>
+  }
+}
+
+// 检查浏览器是否支持 File System Access API
+const isFileSystemAccessSupported = () => {
+  return typeof window !== 'undefined' && 'showDirectoryPicker' in window
 }
 
 function FileNode({
@@ -38,7 +75,7 @@ function FileNode({
   node: FileEntry
   depth?: number
   onToggle: (path: string) => void
-  onSelect: (path: string) => void
+  onSelect: (path: string, handle?: FileSystemFileHandle) => void
   selectedPath: string | null
   onMove: (src: string, dest: string) => void
 }) {
@@ -73,7 +110,7 @@ function FileNode({
 
   return (
     <div
-      style={{ paddingLeft: `${depth * 20}px` }} // 使用内联样式实现层级缩进
+      style={{ paddingLeft: `${depth * 20}px` }}
       draggable={!node.isDirectory}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
@@ -87,7 +124,7 @@ function FileNode({
           if (node.isDirectory) {
             onToggle(node.path)
           } else {
-            onSelect(node.path)
+            onSelect(node.path, node.handle as FileSystemFileHandle)
           }
         }}
       >
@@ -117,29 +154,71 @@ function FileNode({
 export function AppSidebar() {
   const [tree, setTree] = useState<FileEntry | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
-  const [rootPath, setRootPath] = useState<string | null>(null)
+  const [rootHandle, setRootHandle] = useState<FileSystemDirectoryHandle | null>(null)
+  const [isSupported, setIsSupported] = useState(false)
 
-  const loadDirectory = useCallback(async (path: string) => {
+  useEffect(() => {
+    setIsSupported(isFileSystemAccessSupported())
+  }, [])
+
+  // 读取目录内容
+  const readDirectory = async (
+    dirHandle: FileSystemDirectoryHandle,
+    basePath: string = ""
+  ): Promise<FileEntry[]> => {
+    const entries: FileEntry[] = []
+    
     try {
-      const entries = await window.electronAPI.readDirectory(path)
+      for await (const [name, handle] of dirHandle.entries()) {
+        const path = basePath ? `${basePath}/${name}` : name
+        
+        if (handle.kind === 'directory') {
+          entries.push({
+            name,
+            path,
+            isDirectory: true,
+            handle: handle as FileSystemDirectoryHandle,
+            children: [], // 懒加载
+            expanded: false,
+          })
+        } else {
+          entries.push({
+            name,
+            path,
+            isDirectory: false,
+            handle: handle as FileSystemFileHandle,
+          })
+        }
+      }
+    } catch (error) {
+      console.error('Error reading directory:', error)
+    }
+    
+    // 按文件夹优先，然后按名称排序
+    return entries.sort((a, b) => {
+      if (a.isDirectory && !b.isDirectory) return -1
+      if (!a.isDirectory && b.isDirectory) return 1
+      return a.name.localeCompare(b.name)
+    })
+  }
+
+  const loadDirectory = useCallback(async (dirHandle: FileSystemDirectoryHandle) => {
+    try {
+      const entries = await readDirectory(dirHandle)
       setTree({
-        name: path,
-        path,
+        name: dirHandle.name,
+        path: dirHandle.name,
         isDirectory: true,
         expanded: true,
         children: entries,
+        handle: dirHandle,
       })
-      setRootPath(path)
+      setRootHandle(dirHandle)
       setSelectedPath(null)
     } catch (err) {
       console.error("读取目录失败:", err)
     }
   }, [])
-
-  useEffect(() => {
-    // 可选：默认打开某目录
-    // loadDirectory("C:/Users")
-  }, [loadDirectory])
 
   const toggleFolder = useCallback(
     async (path: string) => {
@@ -148,8 +227,16 @@ export function AppSidebar() {
           if (node.expanded) {
             return { ...node, expanded: false }
           } else {
-            const children =
-              node.children ?? (await window.electronAPI.readDirectory(node.path))
+            let children = node.children
+            if (!children || children.length === 0) {
+              // 懒加载子目录
+              if (node.handle && node.handle.kind === 'directory') {
+                children = await readDirectory(
+                  node.handle as FileSystemDirectoryHandle,
+                  node.path
+                )
+              }
+            }
             return { ...node, expanded: true, children }
           }
         }
@@ -170,67 +257,88 @@ export function AppSidebar() {
     [tree]
   )
 
-  const handleSelect = (path: string) => {
+  const handleSelect = (path: string, handle?: FileSystemFileHandle) => {
     setSelectedPath(path)
-    // 可扩展：打开文件预览等
+    // 可以在这里处理文件选择，例如读取文件内容
+    if (handle) {
+      console.log("选中文件:", path, handle)
+    }
   }
 
   const handleOpenFolder = async () => {
+    if (!isSupported) {
+      alert("您的浏览器不支持 File System Access API。请使用 Chrome 86+ 或 Edge 86+")
+      return
+    }
+
     try {
-      const selected = await window.electronAPI.openFolderDialog()
-      if (selected) {
-        await loadDirectory(selected)
-      }
+      const dirHandle = await window.showDirectoryPicker({
+        mode: 'readwrite'
+      })
+      await loadDirectory(dirHandle)
     } catch (err) {
-      console.error("打开文件夹失败:", err)
+      if ((err as Error).name !== 'AbortError') {
+        console.error("打开文件夹失败:", err)
+      }
     }
   }
 
-  const dropRef = useRef<HTMLDivElement>(null)
-
-  // 拖拽处理
+  // 处理拖拽上传文件
   const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
-    if (!rootPath) return
+    if (!rootHandle) return
+
     const files = Array.from(e.dataTransfer.files)
-    // 发送到主进程处理
-    for (const file of files) {
-      // If your backend expects a path, you may need to use file.name and construct the full path if possible.
-      // Otherwise, pass the File object or handle the upload differently.
-      await window.electronAPI.moveFile(file.name, rootPath)
+    
+    try {
+      for (const file of files) {
+        // 创建新文件
+        const fileHandle = await rootHandle.getFileHandle(file.name, {
+          create: true
+        })
+        const writable = await fileHandle.createWritable()
+        await writable.write(file)
+        await writable.close()
+      }
+      // 刷新目录
+      await loadDirectory(rootHandle)
+    } catch (err) {
+      console.error("上传文件失败:", err)
     }
-    // 刷新目录
-    loadDirectory(rootPath)
   }
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
   }
 
-  useEffect(() => {
-    if (!rootPath) return
-    window.electronAPI.watchDirectory(rootPath)
-    const handler = (changedPath: string) => {
-      if (changedPath === rootPath) {
-        loadDirectory(rootPath)
-      }
-    }
-    window.electronAPI.onDirectoryChanged(handler)
-    return () => {
-      window.electronAPI.unwatchDirectory(rootPath)
-      // 这里没有移除事件，因为 ipcRenderer.on 是全局的，通常不会重复注册
-    }
-  }, [rootPath, loadDirectory])
-
-  // 文件移动逻辑
+  // 文件移动逻辑（File System Access API 中移动文件比较复杂，这里简化处理）
   const handleMove = async (src: string, dest: string) => {
-    await window.electronAPI.moveFile(src, dest)
-    if (rootPath) loadDirectory(rootPath)
+    console.log("移动文件功能需要更复杂的实现", src, dest)
+    // 在 File System Access API 中，移动文件需要先读取源文件，然后在目标位置创建新文件，最后删除源文件
+    // 这里暂时只是一个占位符
+  }
+
+  if (!isSupported) {
+    return (
+      <div className="h-full w-[320px] border-r flex flex-col bg-background">
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <span className="font-bold text-lg flex items-center gap-2">
+            <Folder size={20} className="text-primary" />
+            文件浏览器
+          </span>
+        </div>
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center text-muted-foreground">
+            <p className="mb-2">浏览器不支持文件系统访问</p>
+            <p className="text-sm">请使用 Chrome 86+ 或 Edge 86+</p>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div
-      ref={dropRef}
       className="h-full w-[320px] border-r flex flex-col bg-background"
       onDrop={handleDrop}
       onDragOver={handleDragOver}

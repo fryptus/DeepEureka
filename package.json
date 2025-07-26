@@ -9,12 +9,13 @@
   "homepage": "./",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
     "start": "next start",
+    "build": "next build",
     "lint": "next lint",
     "electron": "electron .",
     "electron-dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
     "build-electron": "next build",
+    "test-build": "node scripts/test-build.js",
     "test-prod": "npm run build-electron && electron .",
     "dist": "npm run build-electron && electron-builder",
     "dist-win": "npm run build-electron && electron-builder --win",
@@ -31,23 +32,23 @@
     "files": [
       "main.js",
       "preload.js",
-      ".next/**/*",
-      "public/**/*",
-      "package.json",
-      "next.config.ts",
       "assets/**/*",
-      "node_modules/**/*"
-    ],
-    "asarUnpack": [
-      ".next/standalone/**/*",
-      ".next/static/**/*",
-      ".next/server/**/*",
-      "node_modules/next/**/*"
+      "!node_modules/**/*"
     ],
     "extraResources": [
       {
         "from": ".next/standalone",
         "to": "app/.next/standalone",
+        "filter": ["**/*"]
+      },
+      {
+        "from": ".next/static",
+        "to": "app/.next/static",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "public",
+        "to": "app/public",
         "filter": ["**/*"]
       }
     ],
@@ -55,9 +56,7 @@
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
       "icon": "assets/icon.ico"
@@ -66,10 +65,7 @@
       "target": [
         {
           "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "arch": ["x64", "arm64"]
         }
       ],
       "icon": "assets/icon.icns"
@@ -78,9 +74,7 @@
       "target": [
         {
           "target": "AppImage",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
       "icon": "assets/icon.png"

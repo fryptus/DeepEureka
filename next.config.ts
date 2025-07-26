@@ -1,17 +1,17 @@
 import type { NextConfig } from "next";
 
-/** @type {import('next').NextConfig} */
 const nextConfig: NextConfig = {
-  // 启用独立输出模式，生成自包含的服务器
-  output: 'standalone',
-  
+  // 禁用图片优化
   images: {
     unoptimized: true,
   },
 
-  // 禁用不兼容的功能
+  // 禁用不必要的功能
   poweredByHeader: false,
-
+  
+  // 确保静态文件正确处理
+  trailingSlash: false,
+  
   // Webpack 配置
   webpack: (config, { isServer }) => {
     if (!isServer) {
