@@ -173,7 +173,12 @@ export function SolutionSidebar() {
 
   return (
     <>
-      <div className="w-[350px] border-l h-full flex flex-col bg-background">
+      <div className="w-[350px] border-l h-full flex flex-col bg-background relative">
+        {/* Beta徽标 */}
+        <div className="absolute top-2 right-2 bg-gradient-to-r from-slate-600 to-slate-700 text-white text-[8px] font-medium px-2 py-1 rounded-md uppercase tracking-wider shadow-sm border border-blue-200/20 z-10">
+          ALPHA
+        </div>
+        
         {/* 头部：想法输入区 - 固定高度，不滚动 */}
         <div className="p-4 border-b flex-shrink-0">
           <h2 className="font-semibold mb-3">方案生成器</h2>

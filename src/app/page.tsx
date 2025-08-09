@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import Flow from "@/components/workflow-map";
 import { SolutionSidebar } from "@/components/solution-sidebar";
 import { useChat } from "./chat-context";
+import { Metadata } from 'next'
 
 const MarkdownEditor = dynamic(() => import("@/components/markdown-editor"), {
   ssr: false,
