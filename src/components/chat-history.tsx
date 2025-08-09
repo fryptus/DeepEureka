@@ -173,7 +173,7 @@ export function ChatHistorySidebar({
                         className={`inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-6 w-6 ${
                           s.id === activeSessionId
                             ? "text-red-200 hover:bg-red-600 hover:text-white"
-                            : "text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                            : "text-destructive/80 border border-destructive/30 hover:bg-destructive/15 hover:text-destructive focus-visible:ring-destructive"
                         }`}
                         title="删除"
                         onClick={(e) => {

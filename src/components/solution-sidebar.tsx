@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Send, RotateCcw, ChevronDown, ChevronRight, Edit2, FileText, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
@@ -28,7 +28,8 @@ export function SolutionSidebar() {
     handleUpdateTraces, 
     handleUpdateIdea,
     setEditingTrace,
-    handleUpdateResearchPlan
+    handleUpdateResearchPlan,
+    handleRenameSession // 新增：从上下文获取重命名方法
   } = useChat();
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
@@ -54,7 +55,18 @@ export function SolutionSidebar() {
 
   const generateTraces = async () => {
     if (!input.trim()) return;
-    
+
+    // 新增：发送前同步标题
+    if (activeSessionId) {
+      const buildSessionTitle = (text: string) => {
+        const t = text.trim();
+        if (!t) return '未命名Idea';
+        const maxLen = 30;
+        return t.length > maxLen ? t.slice(0, maxLen) + '...' : t;
+      };
+      handleRenameSession(activeSessionId, buildSessionTitle(input));
+    }
+
     setLoading(true);
     setError(null);
     
@@ -171,14 +183,16 @@ export function SolutionSidebar() {
   const traces = activeSession?.traces || [];
   const selectedTrace = selectedTraceId ? traces.find(t => t.id === selectedTraceId) : null;
 
+  // 同步会话切换：切到其它会话时更新输入框；新建会话（无 idea）时清空
+  useEffect(() => {
+    setInput(activeSession?.idea || '');
+    setSelectedTraceId(null);
+    setPlanError(null);
+  }, [activeSessionId]);
+
   return (
     <>
       <div className="w-[350px] border-l h-full flex flex-col bg-background relative">
-        {/* Beta徽标 */}
-        <div className="absolute top-2 right-2 bg-gradient-to-r from-slate-600 to-slate-700 text-white text-[8px] font-medium px-2 py-1 rounded-md uppercase tracking-wider shadow-sm border border-blue-200/20 z-10">
-          ALPHA
-        </div>
-        
         {/* 头部：想法输入区 - 固定高度，不滚动 */}
         <div className="p-4 border-b flex-shrink-0">
           <h2 className="font-semibold mb-3">方案生成器</h2>

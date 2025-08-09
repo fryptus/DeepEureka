@@ -43,7 +43,7 @@ export function SidebarTabs() {
   return (
     <>
       <div className="h-full w-[320px] border-r flex flex-col bg-background">
-        <div className="flex border-b">
+        {/* <div className="flex border-b">
           <button
             className={`flex-1 py-2 flex items-center justify-center gap-1 ${tab === "file" ? "border-b-2 border-primary font-bold" : ""}`}
             onClick={() => setTab("file")}
@@ -58,9 +58,9 @@ export function SidebarTabs() {
             <Lightbulb size={18} className={tab === "chat" ? "text-primary" : "text-muted-foreground"} />
             想法
           </button>
-        </div>
+        </div> */}
         <div className="flex-1 overflow-auto">
-          {tab === "file" ? (
+          {/* {tab === "file" ? (
             <AppSidebar />
           ) : (
             <ChatHistorySidebar 
@@ -72,7 +72,16 @@ export function SidebarTabs() {
               onShowPlanDetails={handleShowPlanDetails}
               onRenameSession={handleRenameSession}
             />
-          )}
+          )} */}
+            <ChatHistorySidebar 
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              onNewSession={handleNewSession}
+              onSelectSession={handleSelectSession}
+              onDeleteSession={handleDeleteSession}
+              onShowPlanDetails={handleShowPlanDetails}
+              onRenameSession={handleRenameSession}
+            />
         </div>
       </div>
 

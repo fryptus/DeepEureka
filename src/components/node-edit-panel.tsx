@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Check, X, MessageCircle, Edit3, Sparkles, AlertCircle, CheckCircle, Eye, Edit } from "lucide-react";
+import { Check, X, MessageCircle, Edit3, Sparkles, AlertCircle, CheckCircle, Eye, Edit, RotateCcw, Send } from "lucide-react";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useChat } from "@/app/chat-context";
@@ -15,10 +15,12 @@ interface QuestionData {
 // 节点状态枚举
 type NodeStatus = 'selected' | 'editing' | 'completed';
 
-// 扩展问答历史类型，包含评价信息
+// 扩展问答历史类型，包含评价信息和问题ID
 interface QAHistoryItem {
+  question_id: number;
   question: string;
   answer: string;
+  attempts: number;
   evaluation?: {
     is_clear: boolean;
     is_off_topic: boolean;
@@ -65,6 +67,11 @@ export function NodeEditPanel({
   // 新增：预览模式状态
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   
+  // 新增错误处理状态
+  const [qaError, setQaError] = useState<string | null>(null);
+  const [connectionRetries, setConnectionRetries] = useState(0);
+  const [maxRetries] = useState(3);
+
   // 为每个会话独立保存节点状态 - 使用会话ID作为key
   const [sessionNodeStatuses, setSessionNodeStatuses] = useState<Record<string, Record<string, NodeStatus>>>({});
   const [sessionUserEditedNodes, setSessionUserEditedNodes] = useState<Record<string, Set<string>>>({});
@@ -130,6 +137,8 @@ export function NodeEditPanel({
       setQaHistory([]);
       setIsConnecting(false);
       setIsWaitingResponse(false);
+      setQaError(null); // 清理错误状态
+      setConnectionRetries(0);
       
       // 关闭WebSocket连接
       if (websocket) {
@@ -283,143 +292,153 @@ export function NodeEditPanel({
 
   // 启动问答流程
   const startQAProcess = () => {
-    if (!selectedChild) return;
+    if (!selectedChildId) return;
     
     setIsQAMode(true);
-    setIsPreviewMode(false);
     setIsConnecting(true);
-    setQaHistory([]);
-    setCurrentQuestion(null);
+    setQaError(null);
+    setConnectionRetries(0);
     
-    // 更新节点状态为完善中
-    if (selectedChildId) {
-      setNodeStatuses(prev => ({
-        ...prev,
-        [selectedChildId]: 'editing'
-      }));
-    }
-    
-    // 建立WebSocket连接
-    const ws = new WebSocket('ws://116.62.16.12:8000/agent/ws/guided_qa');
-    
-    ws.onopen = () => {
-      setIsConnecting(false);
-      // 发送初始节点信息
-      ws.send(JSON.stringify({
-        title: childTitle,
-        description: childDesc
-      }));
-      setIsWaitingResponse(true);
-    };
-    
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log('WebSocket received:', data);
-      setIsWaitingResponse(false);
+    connectWebSocket();
+  };
+
+  // WebSocket 连接函数
+  const connectWebSocket = () => {
+    try {
+      const ws = new WebSocket('ws://116.62.16.12:8000/agent/ws/guided_qa');
       
-      if (data.type === 'question') {
-        const questionPayload = data.payload;
-        console.log('Question payload:', questionPayload);
+      ws.onopen = () => {
+        console.log('WebSocket 连接已建立');
+        setIsConnecting(false);
+        setQaError(null);
+        setConnectionRetries(0);
         
-        // 如果这是对之前回答的评价，更新历史记录
-        if (currentQuestion && qaHistory.length > 0) {
-          console.log('Updating evaluation for previous answer:', {
-            is_clear: questionPayload.is_clear,
-            is_off_topic: questionPayload.is_off_topic
-          });
-          
-          setQaHistory(prev => {
-            const updated = [...prev];
-            const lastIndex = updated.length - 1;
-            if (updated[lastIndex]) {
-              updated[lastIndex] = {
-                ...updated[lastIndex],
-                evaluation: {
-                  is_clear: questionPayload.is_clear === true,
-                  is_off_topic: questionPayload.is_off_topic === true
-                }
-              };
-              console.log('Updated QA history item:', updated[lastIndex]);
-            }
-            return updated;
-          });
-        }
-        
-        setCurrentQuestion(questionPayload);
-      } else if (data.type === 'finished') {
-        // 问答流程结束时，如果有最后一个问题的评价，也要更新
-        const payload = data.payload;
-        
-        // 检查是否有最后一个回答的评价
-        if (currentQuestion && qaHistory.length > 0 && (payload.is_clear !== undefined || payload.is_off_topic !== undefined)) {
-          setQaHistory(prev => {
-            const updated = [...prev];
-            const lastIndex = updated.length - 1;
-            if (updated[lastIndex]) {
-              updated[lastIndex] = {
-                ...updated[lastIndex],
-                evaluation: {
-                  is_clear: payload.is_clear === true,
-                  is_off_topic: payload.is_off_topic === true
-                }
-              };
-            }
-            return updated;
-          });
-        }
-        
-        // 问答流程结束，更新节点描述
-        const updatedDesc = payload.summary;
-        setChildDesc(updatedDesc);
-        
-        // 自动保存更新后的内容
-        if (selectedChild) {
-          onSave(selectedChild.id, childTitle, updatedDesc);
-          
-          // 标记为用户编辑过的节点
-          setUserEditedNodes(prev => new Set([...prev, selectedChild.id]));
-          
-          // 更新原始描述和节点状态为已完善
-          setOriginalDescriptions(prev => ({
-            ...prev,
-            [selectedChild.id]: updatedDesc
-          }));
-          
-          setNodeStatuses(prev => ({
-            ...prev,
-            [selectedChild.id]: 'completed'
-          }));
-        }
-        
-        setIsQAMode(false);
-        setIsPreviewMode(true); // 自动切换到预览模式
-        setWebsocket(null);
-        ws.close();
-      }
-    };
-    
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setIsConnecting(false);
-      setIsWaitingResponse(false);
-      setIsQAMode(false);
-      
-      // 恢复节点状态
-      if (selectedChildId) {
-        const hasBeenEdited = userEditedNodes.has(selectedChildId);
-        setNodeStatuses(prev => ({
-          ...prev,
-          [selectedChildId]: hasBeenEdited ? 'completed' : 'selected'
+        // 发送初始数据
+        ws.send(JSON.stringify({
+          title: childTitle,
+          description: childDesc
         }));
-      }
-    };
-    
-    ws.onclose = () => {
+        
+        setIsWaitingResponse(true);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          if (data.type === 'question') {
+            setCurrentQuestion(data.payload);
+            setIsWaitingResponse(false);
+            setQaError(null);
+          } else if (data.type === 'evaluation') {
+            // 处理评价结果
+            setQaHistory(prev => {
+              const updated = [...prev];
+              const lastIndex = updated.length - 1;
+              if (lastIndex >= 0) {
+                updated[lastIndex] = {
+                  ...updated[lastIndex],
+                  evaluation: data.payload
+                };
+              }
+              return updated;
+            });
+          } else if (data.type === 'result') {
+            // 完成问答流程
+            setChildTitle(data.payload.title);
+            setChildDesc(data.payload.description);
+            setIsQAMode(false);
+            setCurrentQuestion(null);
+            setIsWaitingResponse(false);
+            
+            // 标记为已编辑 - 只有当selectedChildId不为null时才添加
+            if (selectedChildId) {
+              setUserEditedNodes(prev => new Set([...prev, selectedChildId]));
+            }
+          } else if (data.type === 'error') {
+            setQaError(data.message || '处理过程中发生错误');
+            setIsWaitingResponse(false);
+            setCurrentQuestion(null);
+          }
+        } catch (error) {
+          console.error('解析消息失败:', error);
+          setQaError('消息格式错误');
+          setIsWaitingResponse(false);
+        }
+      };
+
+      ws.onclose = (event) => {
+        console.log('WebSocket 连接已关闭', event.code, event.reason);
+        
+        // 如果不是正常关闭且在连接状态，尝试重连
+        if (event.code !== 1000 && (isConnecting || isWaitingResponse || currentQuestion)) {
+          if (connectionRetries < maxRetries) {
+            setConnectionRetries(prev => prev + 1);
+            setQaError(`连接中断，正在重试 (${connectionRetries + 1}/${maxRetries})`);
+            setTimeout(() => connectWebSocket(), 2000);
+          } else {
+            setQaError('连接失败，请检查网络后重试');
+            setIsConnecting(false);
+            setIsWaitingResponse(false);
+          }
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket 错误:', error);
+        setQaError('连接错误，请重试');
+        setIsConnecting(false);
+        setIsWaitingResponse(false);
+      };
+
+      setWebsocket(ws);
+    } catch (error) {
+      console.error('创建 WebSocket 连接失败:', error);
+      setQaError('无法建立连接，请重试');
       setIsConnecting(false);
-      setIsWaitingResponse(false);
-    };
+    }
+  };
+
+  // 重试连接
+  const retryConnection = () => {
+    setQaError(null);
+    setConnectionRetries(0);
+    setIsConnecting(true);
+    connectWebSocket();
+  };
+
+  // 退出问答模式
+  const exitQAMode = () => {
+    if (websocket) {
+      websocket.close();
+      setWebsocket(null);
+    }
+    setIsQAMode(false);
+    setCurrentQuestion(null);
+    setUserAnswer('');
+    setQaHistory([]);
+    setIsConnecting(false);
+    setIsWaitingResponse(false);
+    setQaError(null);
+    setConnectionRetries(0);
+  };
+
+  // 重新发送当前回答
+  const resendAnswer = () => {
+    if (!currentQuestion || !userAnswer.trim() || !websocket) return;
     
-    setWebsocket(ws);
+    setQaError(null);
+    setIsWaitingResponse(true);
+    
+    try {
+      websocket.send(JSON.stringify({
+        question_id: currentQuestion.question_id,
+        answer: userAnswer.trim()
+      }));
+    } catch (error) {
+      setQaError('发送失败，请重试');
+      setIsWaitingResponse(false);
+    }
   };
 
   // 手动保存时更新状态 - 修复保存逻辑
@@ -473,12 +492,14 @@ export function NodeEditPanel({
       answer: userAnswer.trim()
     }));
 
-    // 添加到历史记录（暂时不包含评价，评价会在下一个问题返回时更新）
+    // 添加到历史记录（保存完整的问题信息）
     setQaHistory(prev => [
       ...prev,
       {
+        question_id: currentQuestion.question_id,
         question: currentQuestion.text,
-        answer: userAnswer.trim()
+        answer: userAnswer.trim(),
+        attempts: currentQuestion.attempts
       }
     ]);
 
@@ -738,7 +759,52 @@ export function NodeEditPanel({
               <MessageCircle className="w-5 h-5 text-primary" />
               <span className="font-medium text-foreground">AI 问答完善节点内容</span>
               <span className="text-sm text-muted-foreground ml-auto">正在优化: {childTitle}</span>
+              {/* <button
+                className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 px-3 flex-shrink-0"
+                onClick={exitQAMode}
+              >
+                退出
+              </button> */}
             </div>
+
+            {/* 错误提示区域 */}
+            {qaError && (
+              <div className="p-4 bg-destructive/10 border-b border-border flex-shrink-0">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-destructive" />
+                    <span className="text-sm text-destructive">{qaError}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    {connectionRetries < maxRetries && (isConnecting || qaError.includes('连接')) && (
+                      <button
+                        className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-8 px-3 gap-2"
+                        onClick={retryConnection}
+                      >
+                        <RotateCcw className="w-4 h-4 mr-1" />
+                        重试连接
+                      </button>
+                    )}
+                    {currentQuestion && userAnswer.trim() && (
+                      <button
+                        className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-8 px-3 gap-2"
+                        onClick={resendAnswer}
+                      >
+                        <Send className="w-4 h-4 mr-1" />
+                        重新发送
+                      </button>
+                    )}
+                    <button
+                      className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-8 px-3"
+                      onClick={exitQAMode}
+                    >
+                      <X className="w-4 h-4 mr-1" />
+                      退出
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
             
             {/* 可滚动的问答历史区域 */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -756,11 +822,18 @@ export function NodeEditPanel({
               {qaHistory.map((qa, index) => (
                 <div key={index} className="space-y-2">
                   <div className="bg-muted p-3 rounded-md">
-                    <div className="font-medium text-sm text-muted-foreground mb-1 flex items-center gap-2">
-                      <span className="bg-primary text-primary-foreground rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold">
-                        {index + 1}
-                      </span>
-                      AI 提问:
+                    <div className="font-medium text-sm text-muted-foreground mb-1 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="bg-primary text-primary-foreground rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold">
+                          {qa.question_id + 1}
+                        </span>
+                        AI 提问:
+                      </div>
+                      {qa.attempts > 0 && (
+                        <span className="bg-orange-100 text-orange-600 px-2 py-1 rounded-full text-xs">
+                          第 {qa.attempts + 1} 次尝试
+                        </span>
+                      )}
                     </div>
                     <div className="text-foreground">{qa.question}</div>
                   </div>
@@ -785,7 +858,7 @@ export function NodeEditPanel({
                     </div>
                     {currentQuestion.attempts > 0 && (
                       <span className="bg-orange-100 text-orange-600 px-2 py-1 rounded-full text-xs">
-                        第 {currentQuestion.attempts + 1} 轮尝试
+                        第 {currentQuestion.attempts + 1} 次尝试
                       </span>
                     )}
                   </div>
@@ -831,27 +904,9 @@ export function NodeEditPanel({
                       )}
                     </button>
                     <button
-                      className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground px-3 py-1 text-xs"
-                      onClick={() => {
-                        setIsQAMode(false);
-                        setCurrentQuestion(null);
-                        setUserAnswer('');
-                        setQaHistory([]);
-                        if (websocket) {
-                          websocket.close();
-                        }
-                        
-                        // 恢复节点状态
-                        if (selectedChildId) {
-                          const hasBeenEdited = userEditedNodes.has(selectedChildId);
-                          setNodeStatuses(prev => ({
-                            ...prev,
-                            [selectedChildId]: hasBeenEdited ? 'completed' : 'selected'
-                          }));
-                        }
-                      }}
-                      disabled={isWaitingResponse}
-                    >
+                      className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 px-3 flex-shrink-0"
+                      onClick={exitQAMode}
+                      disabled={isWaitingResponse}>
                       退出
                     </button>
                   </div>
